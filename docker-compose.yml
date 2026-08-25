@@ -1,0 +1,168 @@
+x-backend-env: &backend-env
+  DJANGO_DEBUG: ${DJANGO_DEBUG:-false}
+  DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-change-me-in-production}
+  DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,backend}
+  CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+  DB_ENGINE: django.db.backends.postgresql
+  DB_NAME: ${POSTGRES_DB:-multiav}
+  DB_USER: ${POSTGRES_USER:-multiav}
+  DB_PASSWORD: ${POSTGRES_PASSWORD:-multiav-change-me}
+  DB_HOST: postgres
+  DB_PORT: "5432"
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/1
+  SCANNER_RUN_INLINE: "false"
+  SCANNER_MOCK_MODE: "false"
+  SCANNER_WORK_DIR: /app/var/scans
+  TOOL_LOCK_DIR: /app/var/tool_locks
+  TOOL_CRAWLER_INTERVAL_SECONDS: ${TOOL_CRAWLER_INTERVAL_SECONDS:-21600}
+  FILE_SANDBOX_ENABLED: "true"
+  FILE_SANDBOX_MAX_UPLOAD_MB: ${FILE_SANDBOX_MAX_UPLOAD_MB:-50}
+  FILE_SANDBOX_STORAGE_DIR: /app/var/file_sandbox
+  CLAMAV_ENABLED: "true"
+  CLAMSCAN_BIN: clamscan
+  FRESHCLAM_BIN: freshclam
+  YARA_ENABLED: "true"
+  YARA_BIN: yara
+  YARA_RULES_DIR: /app/var/yara_rules
+  YARA_RULE_REPOS: ${YARA_RULE_REPOS:-https://github.com/Yara-Rules/rules,https://github.com/Neo23x0/signature-base}
+  EXIFTOOL_ENABLED: "true"
+  EXIFTOOL_BIN: exiftool
+  PDFINFO_ENABLED: "true"
+  PDFINFO_BIN: pdfinfo
+  ELASTICSEARCH_ENABLED: ${ELASTICSEARCH_ENABLED:-true}
+  ELASTICSEARCH_URL: http://elasticsearch:9200
+  ELASTICSEARCH_INDEX: ${ELASTICSEARCH_INDEX:-multiav-tool-logs}
+  TRIVY_CACHE_DIR: /app/var/trivy-cache
+  GRYPE_DB_CACHE_DIR: /app/var/grype-db
+  LOG_FILE_PATH: /app/var/logs/app.log
+
+x-backend-build: &backend-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+x-backend-security: &backend-security
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,size=1g
+
+x-backend-volumes: &backend-volumes
+  - scanner_var:/app/var
+  - clamav_db:/var/lib/clamav
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-multiav}
+      POSTGRES_USER: ${POSTGRES_USER:-multiav}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-multiav-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [internal]
+    security_opt: ["no-new-privileges:true"]
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks: [internal]
+    security_opt: ["no-new-privileges:true"]
+
+  elasticsearch:
+    image: elasticsearch:8.14.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks: [internal, public]
+    security_opt: ["no-new-privileges:true"]
+
+  backend:
+    build: *backend-build
+    environment: *backend-env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      - postgres
+      - redis
+      - elasticsearch
+    ports:
+      - "8000:8000"
+    volumes: *backend-volumes
+    <<: *backend-security
+    networks: [internal, public]
+
+  worker:
+    build: *backend-build
+    command: ["celery", "-A", "config", "worker", "-l", "info", "--concurrency=2"]
+    environment: *backend-env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      - backend
+      - redis
+      - postgres
+    volumes:
+      - scanner_var:/app/var
+      - clamav_db:/var/lib/clamav
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "124"
+    <<: *backend-security
+    networks: [internal, public]
+
+  beat:
+    build: *backend-build
+    command: ["celery", "-A", "config", "beat", "-l", "info", "--schedule", "/app/var/celerybeat-schedule"]
+    environment: *backend-env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      - worker
+      - redis
+      - postgres
+    volumes: *backend-volumes
+    <<: *backend-security
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    networks: [internal]
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      BACKEND_API_URL: http://backend:8000
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    networks: [public, internal]
+
+networks:
+  internal:
+    internal: true
+  public:
+
+volumes:
+  postgres_data:
+  redis_data:
+  elasticsearch_data:
+  scanner_var:
+  clamav_db:

@@ -1,0 +1,43 @@
+.DS_Store
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+backend/.venv/
+
+# Django/local runtime data
+backend/db.sqlite3
+backend/var/uploads/*
+!backend/var/uploads/.gitkeep
+backend/var/file_sandbox/*
+!backend/var/file_sandbox/.gitkeep
+backend/var/scans/*
+!backend/var/scans/.gitkeep
+backend/var/scan_*/
+backend/var/tool_locks/*
+!backend/var/tool_locks/.gitkeep
+backend/var/logs/*
+!backend/var/logs/.gitkeep
+
+# Keep scanner signature directory structure, but do not commit generated DB contents.
+backend/var/yara_rules/*
+!backend/var/yara_rules/.gitkeep
+
+# Frontend generated files
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# ELK/runtime data
+elk/data/
+elastic/data/

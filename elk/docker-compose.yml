@@ -1,0 +1,93 @@
+services:
+  elasticsearch:
+    image: ${ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:9.4.3}
+    container_name: threadlens-elasticsearch
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-threadlens-dev-password}
+      xpack.security.enabled: "true"
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -u elastic:${ELASTIC_PASSWORD:-threadlens-dev-password} http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    networks:
+      - elk
+
+  setup:
+    image: ${ELASTICSEARCH_IMAGE:-docker.elastic.co/elasticsearch/elasticsearch:9.4.3}
+    container_name: threadlens-elk-setup
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-threadlens-dev-password}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-threadlens-kibana-password}
+    command:
+      - /bin/bash
+      - -c
+      - |
+        set -euo pipefail
+        curl -fsS -u "elastic:$${ELASTIC_PASSWORD}" \
+          -H "Content-Type: application/json" \
+          -X POST "http://elasticsearch:9200/_security/user/kibana_system/_password" \
+          -d "{\"password\":\"$${KIBANA_SYSTEM_PASSWORD}\"}"
+        echo "Kibana system password configured."
+    networks:
+      - elk
+
+  kibana:
+    image: ${KIBANA_IMAGE:-docker.elastic.co/kibana/kibana:9.4.3}
+    container_name: threadlens-kibana
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      SERVER_NAME: threadlens-kibana
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: kibana_system
+      ELASTICSEARCH_PASSWORD: ${KIBANA_SYSTEM_PASSWORD:-threadlens-kibana-password}
+      XPACK_SECURITY_ENABLED: "true"
+    ports:
+      - "5601:5601"
+    networks:
+      - elk
+
+  logstash:
+    image: ${LOGSTASH_IMAGE:-docker.elastic.co/logstash/logstash:9.4.3}
+    container_name: threadlens-logstash
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD:-threadlens-dev-password}
+      XPACK_MONITORING_ENABLED: "false"
+    ports:
+      - "5044:5044"
+      - "9600:9600"
+    volumes:
+      - ./logstash/pipeline/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+      - /Users/arash/Documents/pro/security_orchestrator/backend/var/logs:/usr/share/logstash/pipeline/logs:ro
+      - logstash_data:/usr/share/logstash/data
+    networks:
+      - elk
+
+networks:
+  elk:
+    name: threadlens-elk
+
+volumes:
+  elasticsearch_data:
+  logstash_data:

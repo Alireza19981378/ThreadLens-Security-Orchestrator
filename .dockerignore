@@ -1,0 +1,12 @@
+.DS_Store
+.git
+.venv
+**/__pycache__
+**/*.pyc
+backend/db.sqlite3
+backend/var
+backend/.venv
+frontend/node_modules
+frontend/.next
+frontend/.env*
+*.log
